@@ -44,6 +44,7 @@ class CoreAIExporter:
             platforms = self.registry.platforms_for(
                 request.model
             )
+
             suffix = (
                 f" Available platforms: {', '.join(platforms)}."
                 if platforms
@@ -61,6 +62,7 @@ class CoreAIExporter:
             request.model,
             request.platform,
         )
+
         export_root.mkdir(
             parents=True,
             exist_ok=True,
@@ -102,13 +104,19 @@ class CoreAIExporter:
             )
 
         if request.experimental:
-            command.append("--experimental")
+            command.append(
+                "--experimental"
+            )
 
         if request.include_debug_info:
-            command.append("--include-debug-info")
+            command.append(
+                "--include-debug-info"
+            )
 
         if request.dry_run:
-            command.append("--dry-run")
+            command.append(
+                "--dry-run"
+            )
 
         self.runner.run(
             command,
@@ -130,16 +138,31 @@ class CoreAIExporter:
             platform=request.platform,
             command=command,
         )
+
         build.write()
-        self.store.register_variant(build)
+        self.store.register_variant(
+            build
+        )
+
         return build
 
-    def _environment(self) -> dict[str, str]:
+    def _environment(
+        self,
+    ) -> dict[str, str]:
+        huggingface_cache = (
+            self.settings.cache_dir
+            / "huggingface"
+        )
+
+        huggingface_cache.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
         environment = {
-            "HF_HOME": str(
-                self.settings.cache_dir
-                / "huggingface"
-            )
+            "HF_HUB_CACHE": str(
+                huggingface_cache
+            ),
         }
 
         if self.settings.hf_token:
@@ -148,3 +171,4 @@ class CoreAIExporter:
             )
 
         return environment
+    
