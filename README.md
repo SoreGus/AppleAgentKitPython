@@ -1,166 +1,203 @@
 # AppleAgentKitPython
 
-Build-time tooling for preparing local language models for AppleAgentKit with Apple's Core AI toolchain.
+Build-time tooling for preparing and publishing local language models for AppleAgentKit with Apple's Core AI toolchain.
 
-AppleAgentKitPython does not implement its own model converter. It composes Apple's official `coreai-models`, `coreai-torch`, and `coreai-opt` tooling and produces Core AI resource bundles that can be loaded by `CoreAILanguageModel(resourcesAt:)` from Swift.
+AppleAgentKitPython does not implement its own model converter. Apple's `coreai-models` registry and exporters remain the source of truth for supported models, platform presets, compression recipes, precision, and context configuration.
 
 ## Requirements
 
 - Apple Silicon Mac
-- macOS 27+
 - Xcode 27+
 - Python 3.11–3.13
+- `uv`
 - Git
-- Hugging Face access for the selected model
 
-Python 3.14 is intentionally not supported by this project at the moment because the current `coreai-opt` package requires Python `<3.14`.
+Python 3.14 is intentionally excluded because the current `coreai-opt` dependency requires Python `<3.14`.
+
+Install `uv` if necessary:
+
+```bash
+brew install uv
+```
 
 ## Setup
 
 Create the local environment file:
 
 ```bash
-cp .env.example .env
+cp .env-example .env
 ```
 
-Adjust `PYTHON_BIN` to the Python executable installed on your Mac. The default is:
-
-```text
-/opt/homebrew/opt/python@3.13/bin/python3.13
-```
-
-Bootstrap the project:
-
-```bash
-make
-```
-
-Activate the environment:
-
-```bash
-source .venv/bin/activate
-```
-
-Validate the machine and toolchain:
-
-```bash
-apple-agent-kit doctor
-```
-
-## Configuration
-
-`.env`:
+Adjust `PYTHON_BIN` if necessary:
 
 ```env
 PYTHON_BIN=/opt/homebrew/opt/python@3.13/bin/python3.13
 
 APPLE_AGENT_KIT_CACHE_DIR=.cache
 APPLE_AGENT_KIT_ARTIFACTS_DIR=Artifacts
-
-APPLE_AGENT_KIT_DEFAULT_MODEL=Qwen/Qwen2.5-1.5B-Instruct
-APPLE_AGENT_KIT_DEFAULT_PLATFORM=macOS
-APPLE_AGENT_KIT_DEFAULT_COMPRESSION=4bit
-APPLE_AGENT_KIT_DEFAULT_CONTEXT_LENGTH=4096
+APPLE_AGENT_KIT_DEFAULT_MODEL=qwen3-1.7b
 
 HF_TOKEN=
 ```
 
-`HF_TOKEN` is optional for public models but is recommended to avoid anonymous Hugging Face rate limits.
-
-## Commands
-
-Validate the environment:
+Bootstrap and validate everything:
 
 ```bash
-apple-agent-kit doctor
+make
 ```
 
-List models registered by Apple's Core AI model tooling:
+`make` validates Python and `uv`, synchronizes `.venv` from `pyproject.toml` / `uv.lock`, and runs `apple-agent-kit doctor`.
+
+Activation is optional. The Makefile calls the virtual-environment executables directly. Activate only for interactive use:
+
+```bash
+source .venv/bin/activate
+```
+
+## Core AI model registry
+
+List all Apple-registered LLM presets:
 
 ```bash
 apple-agent-kit models
 ```
 
-List macOS LLM presets:
+Filter by platform:
 
 ```bash
 apple-agent-kit models --platform macOS
+apple-agent-kit models --platform iOS
 ```
 
-Download the default model into the configured cache:
+Use registry short names such as `qwen3-1.7b`. Apple resolves the Hugging Face model ID and tested platform-specific export defaults.
+
+## Download
+
+Download the upstream Hugging Face model into the configured cache without exporting it:
 
 ```bash
-apple-agent-kit download
+apple-agent-kit download qwen3-1.7b
 ```
 
-Download another Hugging Face model:
+The short name is resolved through Apple's registry. A raw Hugging Face model ID is also accepted:
 
 ```bash
-apple-agent-kit download Qwen/Qwen3-0.6B
+apple-agent-kit download Qwen/Qwen3-1.7B
 ```
 
-Export the configured default model:
+## Prepare
+
+Export the default model for macOS:
 
 ```bash
 apple-agent-kit prepare
 ```
 
-Export Qwen 3:
+Export a specific registered model:
 
 ```bash
-apple-agent-kit prepare Qwen/Qwen3-0.6B
+apple-agent-kit prepare qwen3-1.7b --platform macOS
 ```
 
-Export for iOS:
+Export the iOS/iPadOS variant:
 
 ```bash
-apple-agent-kit prepare Qwen/Qwen2.5-1.5B-Instruct \
-  --platform iOS \
+apple-agent-kit prepare qwen3-1.7b --platform iOS
+```
+
+Export both Apple-platform variants:
+
+```bash
+apple-agent-kit prepare-all qwen3-1.7b
+```
+
+For registered models, compression and context configuration are intentionally left to Apple's registry. Advanced exporter flags can still be forwarded when explicitly needed:
+
+```bash
+apple-agent-kit prepare qwen3-1.7b \
+  --platform macOS \
   --max-context-length 4096
 ```
 
-Override compression:
+A dry run resolves the Apple exporter configuration without conversion:
 
 ```bash
-apple-agent-kit prepare Qwen/Qwen2.5-1.5B-Instruct \
-  --compression 4bit_weights_8bit_kv_cache
+apple-agent-kit prepare qwen3-1.7b --platform macOS --dry-run
 ```
 
-Preview the resolved Apple export configuration without converting:
-
-```bash
-apple-agent-kit prepare --dry-run
-```
-
-Inspect a generated bundle:
-
-```bash
-apple-agent-kit inspect Artifacts/<bundle>
-```
-
-Forward arguments to Apple's ahead-of-time compiler:
-
-```bash
-apple-agent-kit coreai-build compile --help
-```
-
-The `coreai-build` command intentionally forwards arguments directly to Apple's `xcrun coreai-build` tool so Apple remains the source of truth for compiler options.
-
-## Output
-
-Exports are written below:
+Artifacts are organized as:
 
 ```text
 Artifacts/
+└── qwen3-1.7b/
+    ├── manifest.json
+    ├── macOS/
+    │   ├── appleagentkit-build.json
+    │   └── <Core AI resources>
+    └── iOS/
+        ├── appleagentkit-build.json
+        └── <Core AI resources>
 ```
 
-Apple's LLM exporter produces a resource folder containing the `.aimodel` asset and resources required by the language model, such as tokenizer data and metadata.
+## Inspect
 
-AppleAgentKitPython also writes an `appleagentkit-build.json` manifest in the configured export root containing the requested model, target platform, compression, context length, command, and discovered output resources.
+Inspect all prepared variants:
+
+```bash
+apple-agent-kit inspect qwen3-1.7b
+```
+
+Inspect one platform:
+
+```bash
+apple-agent-kit inspect qwen3-1.7b --platform macOS
+```
+
+## Hugging Face authentication
+
+Create a Hugging Face account and authenticate once locally:
+
+```bash
+apple-agent-kit login
+```
+
+The underlying Hugging Face credential is stored by `huggingface-hub`. `HF_TOKEN` is optional and is mainly useful for CI or explicit environment-based authentication.
+
+Verify authentication:
+
+```bash
+apple-agent-kit whoami
+```
+
+## Publish
+
+After preparing one or both variants, publish the artifact root to a Hugging Face model repository:
+
+```bash
+apple-agent-kit publish qwen3-1.7b \
+  --repo SoreGus/Qwen3-1.7B-CoreAI
+```
+
+The command:
+
+1. validates local Hugging Face authentication;
+2. validates the prepared artifact manifest;
+3. generates a model card from the Apple registry/build metadata;
+4. attempts to copy the upstream model license into the publication root;
+5. creates the Hugging Face model repository when necessary;
+6. uploads the folder with `huggingface-hub`.
+
+Create a private repository with:
+
+```bash
+apple-agent-kit publish qwen3-1.7b \
+  --repo SoreGus/Qwen3-1.7B-CoreAI \
+  --private
+```
 
 ## Swift integration
 
-The resulting Core AI resource folder is consumed directly by Apple's runtime:
+A prepared/downloaded Core AI resource folder can be loaded directly by Apple's runtime:
 
 ```swift
 import CoreAILanguageModels
@@ -180,26 +217,29 @@ AppleAgentKit can use that `CoreAILanguageModel` anywhere it accepts a `Language
 ## Design
 
 ```text
-Hugging Face model
+Apple Core AI registry
         ↓
-Apple coreai-models
+AppleAgentKitPython
         ↓
-coreai-torch / coreai-opt
+coreai.llm.export
         ↓
-Core AI resource bundle
+Core AI resource bundles
+        ↓
+Hugging Face repository
+        ↓
+AppleAgentKit Swift
         ↓
 CoreAILanguageModel
         ↓
 FoundationModels
-        ↓
-AppleAgentKit
 ```
 
 Responsibilities are deliberately separated:
 
-- AppleAgentKitPython: download, export, optimize, inspect, and prepare artifacts.
-- Apple's Core AI tooling: conversion and optimization semantics.
-- AppleAgentKit: Swift runtime composition.
-- FoundationModels: sessions, tools, guided generation, transcript, and agentic execution.
+- Apple's Core AI tooling owns model conversion semantics and tested presets.
+- AppleAgentKitPython owns build workflow, local artifact organization, inspection, and publication.
+- Hugging Face stores and distributes prepared Core AI artifacts.
+- AppleAgentKit owns Swift-side model acquisition/composition.
+- FoundationModels/Core AI own inference, sessions, tools, guided generation, and agentic execution.
 
 AppleAgentKitPython does not implement an alternative converter, tokenizer, inference runtime, tool-calling loop, or model format.

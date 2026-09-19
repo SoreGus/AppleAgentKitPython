@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from collections.abc import Sequence
 import json
 
 
@@ -18,10 +18,8 @@ class ArtifactManifest:
     version: int
     created_at: str
     model: str
+    base_model: str | None
     platform: str
-    compression: str | None
-    max_context_length: int | None
-    dry_run: bool
     export_root: str
     command: tuple[str, ...]
     resources: tuple[ArtifactResource, ...]
@@ -32,50 +30,31 @@ class ArtifactManifest:
         *,
         export_root: Path,
         model: str,
+        base_model: str | None,
         platform: str,
-        compression: str | None,
-        max_context_length: int | None,
-        dry_run: bool,
         command: Sequence[str],
-    ) -> ArtifactManifest:
-        resources = ()
-
-        if not dry_run:
-            resources = tuple(
-                _discover_resources(export_root)
-            )
-
+    ) -> "ArtifactManifest":
         return cls(
             version=1,
-            created_at=datetime.now(
-                timezone.utc
-            ).isoformat(),
+            created_at=_now(),
             model=model,
+            base_model=base_model,
             platform=platform,
-            compression=compression,
-            max_context_length=max_context_length,
-            dry_run=dry_run,
             export_root=str(export_root),
             command=tuple(command),
-            resources=resources,
+            resources=tuple(
+                _discover_resources(export_root)
+            ),
         )
 
     @classmethod
     def read(
         cls,
         path: Path,
-    ) -> ArtifactManifest:
+    ) -> "ArtifactManifest":
         data = json.loads(
             path.read_text(
                 encoding="utf-8"
-            )
-        )
-
-        resources = tuple(
-            ArtifactResource(**resource)
-            for resource in data.get(
-                "resources",
-                []
             )
         )
 
@@ -83,48 +62,81 @@ class ArtifactManifest:
             version=data["version"],
             created_at=data["created_at"],
             model=data["model"],
+            base_model=data.get("base_model"),
             platform=data["platform"],
-            compression=data.get("compression"),
-            max_context_length=data.get(
-                "max_context_length"
-            ),
-            dry_run=data.get(
-                "dry_run",
-                False,
-            ),
             export_root=data["export_root"],
             command=tuple(
-                data.get(
-                    "command",
+                data.get("command", [])
+            ),
+            resources=tuple(
+                ArtifactResource(**resource)
+                for resource in data.get(
+                    "resources",
                     [],
                 )
             ),
-            resources=resources,
         )
 
     def write(
         self,
     ) -> Path:
-        root = Path(self.export_root)
-        root.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
         path = (
-            root
+            Path(self.export_root)
             / "appleagentkit-build.json"
         )
+        _write_json(
+            path,
+            asdict(self),
+        )
+        return path
 
-        path.write_text(
-            json.dumps(
-                asdict(self),
-                indent=2,
-                ensure_ascii=False,
+
+@dataclass(frozen=True, slots=True)
+class ModelVariant:
+    platform: str
+    path: str
+    base_model: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ModelArtifactManifest:
+    version: int
+    updated_at: str
+    model: str
+    variants: tuple[ModelVariant, ...]
+
+    @classmethod
+    def read(
+        cls,
+        path: Path,
+    ) -> "ModelArtifactManifest":
+        data = json.loads(
+            path.read_text(
+                encoding="utf-8"
             )
-            + "\n",
-            encoding="utf-8",
         )
 
+        return cls(
+            version=data["version"],
+            updated_at=data["updated_at"],
+            model=data["model"],
+            variants=tuple(
+                ModelVariant(**variant)
+                for variant in data.get(
+                    "variants",
+                    [],
+                )
+            ),
+        )
+
+    def write(
+        self,
+        path: Path,
+    ) -> Path:
+        _write_json(
+            path,
+            asdict(self),
+        )
         return path
 
 
@@ -133,15 +145,11 @@ def _discover_resources(
 ) -> list[ArtifactResource]:
     resources: list[ArtifactResource] = []
 
-    for path in sorted(
-        root.rglob("*")
-    ):
+    for path in sorted(root.rglob("*")):
         if not path.is_file():
             continue
 
-        kind = _resource_kind(path)
-
-        if kind is None:
+        if path.name == "appleagentkit-build.json":
             continue
 
         resources.append(
@@ -149,7 +157,7 @@ def _discover_resources(
                 path=str(
                     path.relative_to(root)
                 ),
-                kind=kind,
+                kind=_resource_kind(path),
             )
         )
 
@@ -158,14 +166,39 @@ def _discover_resources(
 
 def _resource_kind(
     path: Path,
-) -> str | None:
-    if path.suffix == ".aimodel":
+) -> str:
+    if ".aimodel" in path.parts or path.suffix == ".aimodel":
         return "aimodel"
 
     if path.name == "metadata.json":
         return "metadata"
 
-    if "tokenizer" in path.name.lower():
+    if "tokenizer" in path.as_posix().lower():
         return "tokenizer"
 
-    return None
+    return "resource"
+
+
+def _write_json(
+    path: Path,
+    data: object,
+) -> None:
+    path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+    path.write_text(
+        json.dumps(
+            data,
+            indent=2,
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def _now() -> str:
+    return datetime.now(
+        timezone.utc
+    ).isoformat()

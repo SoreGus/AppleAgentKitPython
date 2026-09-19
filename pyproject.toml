@@ -1,31 +1,20 @@
 [build-system]
-requires = ["setuptools>=77", "wheel"]
+requires = [
+    "setuptools>=77",
+    "wheel",
+]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "apple-agent-kit-python"
-version = "0.1.0"
-description = "Build-time tooling for preparing Core AI language models for AppleAgentKit."
+version = "0.2.0"
+description = "Build-time tooling for preparing and publishing Core AI language models for AppleAgentKit."
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
+
 dependencies = [
-    "accelerate>=1.12,<2.0",
-    "coreai-core==1.0.0b2",
-    "coreai-torch==0.4.2",
-    "coreai-opt==0.2.1",
-    "torch==2.9.0",
-    "setuptools>=42",
-    "numpy>=2.2,<3.0",
-    "tqdm>=4.67,<5.0",
-    "datasets>=4.0,<5.0",
-    "rich>=14.0,<15.0",
-    "transformers>=5.5.0,<6.0",
-    "huggingface-hub>=1.5.0,<2.0",
-    "safetensors>=0.5,<1.0",
-    "sentencepiece>=0.2,<1.0",
-    "tokenizers>=0.22,<0.23",
-    "diffusers>=0.37,<1.0",
     "python-dotenv>=1.1,<2.0",
+    "huggingface-hub>=1.32,<2.0",
     "coreai-models @ git+https://github.com/apple/coreai-models.git@main#subdirectory=python",
 ]
 
@@ -40,7 +29,16 @@ target-version = "py311"
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "W", "UP", "B"]
+select = [
+    "E",
+    "F",
+    "I",
+    "W",
+    "UP",
+    "B",
+]
 
 [tool.ruff.lint.isort]
-known-first-party = ["appleagentkit"]
+known-first-party = [
+    "appleagentkit",
+]

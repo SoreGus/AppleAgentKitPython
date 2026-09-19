@@ -4,7 +4,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from appleagentkit.artifact.manifest import ArtifactManifest
+from appleagentkit.artifact.store import ArtifactStore
 from appleagentkit.config.loader import Settings
+from appleagentkit.coreai.registry import CoreAIModelRegistry
 from appleagentkit.coreai.tooling import CoreAITooling
 from appleagentkit.process.runner import CommandRunner
 
@@ -13,9 +15,9 @@ from appleagentkit.process.runner import CommandRunner
 class ExportRequest:
     model: str
     platform: str
-    compression: str | None
-    max_context_length: int | None
-    output_dir: Path
+    max_context_length: int | None = None
+    compression: str | None = None
+    compression_config: Path | None = None
     experimental: bool = False
     include_debug_info: bool = False
     dry_run: bool = False
@@ -25,27 +27,63 @@ class ExportRequest:
 class CoreAIExporter:
     settings: Settings
     tooling: CoreAITooling
+    registry: CoreAIModelRegistry
+    store: ArtifactStore
     runner: CommandRunner
 
     def export(
         self,
         request: ExportRequest,
-    ) -> ArtifactManifest:
-        request.output_dir.mkdir(
+    ) -> ArtifactManifest | None:
+        preset = self.registry.resolve(
+            request.model,
+            platform=request.platform,
+        )
+
+        if preset is None and not request.experimental:
+            platforms = self.registry.platforms_for(
+                request.model
+            )
+            suffix = (
+                f" Available platforms: {', '.join(platforms)}."
+                if platforms
+                else ""
+            )
+
+            raise RuntimeError(
+                f"'{request.model}' is not registered for "
+                f"{request.platform}.{suffix} "
+                "Use --experimental only for an unregistered model "
+                "whose Core AI Python implementation exists."
+            )
+
+        export_root = self.store.variant_root(
+            request.model,
+            request.platform,
+        )
+        export_root.mkdir(
             parents=True,
             exist_ok=True,
         )
 
-        command = [
-            str(self.tooling.llm_export),
+        command = self.tooling.command(
+            "coreai.llm.export",
             request.model,
             "--platform",
             request.platform,
             "--output-dir",
-            str(request.output_dir),
-        ]
+            str(export_root),
+        )
 
-        if request.compression:
+        if request.max_context_length is not None:
+            command.extend(
+                [
+                    "--max-context-length",
+                    str(request.max_context_length),
+                ]
+            )
+
+        if request.compression is not None:
             command.extend(
                 [
                     "--compression",
@@ -53,11 +91,13 @@ class CoreAIExporter:
                 ]
             )
 
-        if request.max_context_length is not None:
+        if request.compression_config is not None:
             command.extend(
                 [
-                    "--max-context-length",
-                    str(request.max_context_length),
+                    "--compression-config",
+                    str(
+                        request.compression_config.resolve()
+                    ),
                 ]
             )
 
@@ -70,37 +110,41 @@ class CoreAIExporter:
         if request.dry_run:
             command.append("--dry-run")
 
-        environment = self._environment()
-
         self.runner.run(
             command,
             cwd=self.settings.project_root,
-            environment=environment,
+            environment=self._environment(),
         )
 
-        manifest = ArtifactManifest.create(
-            export_root=request.output_dir,
+        if request.dry_run:
+            return None
+
+        build = ArtifactManifest.create(
+            export_root=export_root,
             model=request.model,
+            base_model=(
+                preset.hf_id
+                if preset is not None
+                else None
+            ),
             platform=request.platform,
-            compression=request.compression,
-            max_context_length=request.max_context_length,
-            dry_run=request.dry_run,
             command=command,
         )
-
-        if not request.dry_run:
-            manifest.write()
-
-        return manifest
+        build.write()
+        self.store.register_variant(build)
+        return build
 
     def _environment(self) -> dict[str, str]:
         environment = {
             "HF_HOME": str(
-                self.settings.cache_dir / "huggingface"
+                self.settings.cache_dir
+                / "huggingface"
             )
         }
 
         if self.settings.hf_token:
-            environment["HF_TOKEN"] = self.settings.hf_token
+            environment["HF_TOKEN"] = (
+                self.settings.hf_token
+            )
 
         return environment
