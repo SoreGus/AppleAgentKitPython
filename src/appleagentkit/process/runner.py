@@ -15,6 +15,32 @@ class CommandResult:
     stderr: str = ""
 
 
+class CommandExecutionError(RuntimeError):
+    def __init__(
+        self,
+        result: CommandResult,
+    ) -> None:
+        self.result = result
+
+        detail = (
+            result.stderr.strip()
+            or result.stdout.strip()
+        )
+
+        suffix = (
+            f"\n{detail}"
+            if detail
+            else ""
+        )
+
+        super().__init__(
+            "Command failed with exit code "
+            f"{result.return_code}: "
+            f"{' '.join(result.command)}"
+            f"{suffix}"
+        )
+
+
 class CommandRunner:
     def run(
         self,
@@ -60,11 +86,17 @@ class CommandRunner:
         capture_output: bool,
         timeout: float | None = None,
     ) -> CommandResult:
-        command_tuple = tuple(str(part) for part in command)
+        command_tuple = tuple(
+            str(part)
+            for part in command
+        )
+
         merged_environment = os.environ.copy()
 
         if environment is not None:
-            merged_environment.update(environment)
+            merged_environment.update(
+                environment
+            )
 
         completed = subprocess.run(
             command_tuple,
@@ -76,23 +108,28 @@ class CommandRunner:
             timeout=timeout,
         )
 
-        stdout = completed.stdout or "" if capture_output else ""
-        stderr = completed.stderr or "" if capture_output else ""
+        stdout = (
+            completed.stdout or ""
+            if capture_output
+            else ""
+        )
 
-        if check and completed.returncode != 0:
-            detail = stderr.strip() or stdout.strip()
-            suffix = f"\n{detail}" if detail else ""
+        stderr = (
+            completed.stderr or ""
+            if capture_output
+            else ""
+        )
 
-            raise RuntimeError(
-                "Command failed with exit code "
-                f"{completed.returncode}: "
-                f"{' '.join(command_tuple)}"
-                f"{suffix}"
-            )
-
-        return CommandResult(
+        result = CommandResult(
             command=command_tuple,
             return_code=completed.returncode,
             stdout=stdout,
             stderr=stderr,
         )
+
+        if check and completed.returncode != 0:
+            raise CommandExecutionError(
+                result
+            )
+
+        return result

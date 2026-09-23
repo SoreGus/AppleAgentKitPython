@@ -2,13 +2,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
+import sys
 
 from appleagentkit.artifact.manifest import ArtifactManifest
 from appleagentkit.artifact.store import ArtifactStore
 from appleagentkit.config.loader import Settings
 from appleagentkit.coreai.registry import CoreAIModelRegistry
+from appleagentkit.coreai.resources import resolve_coreai_resource
 from appleagentkit.coreai.tooling import CoreAITooling
-from appleagentkit.process.runner import CommandRunner
+from appleagentkit.process.runner import (
+    CommandExecutionError,
+    CommandResult,
+    CommandRunner,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,10 +125,9 @@ class CoreAIExporter:
                 "--dry-run"
             )
 
-        self.runner.run(
+        executed_command = self._run_export_command(
             command,
-            cwd=self.settings.project_root,
-            environment=self._environment(),
+            request=request,
         )
 
         if request.dry_run:
@@ -136,15 +142,111 @@ class CoreAIExporter:
                 else None
             ),
             platform=request.platform,
-            command=command,
+            command=executed_command,
         )
 
         build.write()
+
         self.store.register_variant(
             build
         )
 
         return build
+
+    def _run_export_command(
+        self,
+        command: list[str],
+        *,
+        request: ExportRequest,
+    ) -> list[str]:
+        try:
+            result = self.runner.capture(
+                command,
+                cwd=self.settings.project_root,
+                environment=self._environment(),
+            )
+
+            self._emit_output(result)
+
+            return command
+
+        except CommandExecutionError as error:
+            if request.compression_config is not None:
+                raise
+
+            relative_resource = (
+                self._missing_registry_resource(
+                    error.result
+                )
+            )
+
+            if relative_resource is None:
+                raise
+
+            resource = resolve_coreai_resource(
+                relative_resource
+            )
+
+            retry_command = [
+                *command,
+                "--compression-config",
+                str(resource),
+            ]
+
+            print(
+                "[INFO] Core AI registry resource resolved: "
+                f"{relative_resource}"
+            )
+
+            self.runner.run(
+                retry_command,
+                cwd=self.settings.project_root,
+                environment=self._environment(),
+            )
+
+            return retry_command
+
+    def _missing_registry_resource(
+        self,
+        result: CommandResult,
+    ) -> str | None:
+        output = "\n".join(
+            part
+            for part in (
+                result.stdout,
+                result.stderr,
+            )
+            if part
+        )
+
+        match = re.search(
+            r"Registry preset references\s+"
+            r"([^\s,]+\.ya?ml)",
+            output,
+        )
+
+        if match is None:
+            return None
+
+        return match.group(1)
+
+    def _emit_output(
+        self,
+        result: CommandResult,
+    ) -> None:
+        if result.stdout:
+            print(
+                result.stdout,
+                end="",
+                file=sys.stdout,
+            )
+
+        if result.stderr:
+            print(
+                result.stderr,
+                end="",
+                file=sys.stderr,
+            )
 
     def _environment(
         self,
@@ -171,4 +273,3 @@ class CoreAIExporter:
             )
 
         return environment
-    
