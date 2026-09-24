@@ -87,31 +87,83 @@ apple-agent-kit download Qwen/Qwen3-1.7B
 
 ## Prepare
 
-Export the default model for macOS:
+`prepare` converts a Hugging Face model into Apple Core AI resources for a target platform.
+
+The model configured by `APPLE_AGENT_KIT_DEFAULT_MODEL` can be prepared without specifying its name:
 
 ```bash
 apple-agent-kit prepare
 ```
 
-Export a specific registered model:
+By default, the command uses the platform configured by the CLI. A platform can always be selected explicitly.
+
+### Prepare a registered model
+
+Prepare a specific model for macOS:
 
 ```bash
-apple-agent-kit prepare qwen3-1.7b --platform macOS
+apple-agent-kit prepare qwen3-1.7b \
+  --platform macOS
 ```
 
-Export the iOS/iPadOS variant:
+Prepare the iOS/iPadOS variant:
 
 ```bash
-apple-agent-kit prepare qwen3-1.7b --platform iOS
+apple-agent-kit prepare qwen3-1.7b \
+  --platform iOS
 ```
 
-Export both Apple-platform variants:
+For example, prepare the smaller Qwen3 0.6B model for iOS:
+
+```bash
+apple-agent-kit prepare qwen3-0.6b \
+  --platform iOS
+```
+
+### Prepare all Apple-platform variants
+
+Prepare both macOS and iOS/iPadOS variants:
 
 ```bash
 apple-agent-kit prepare-all qwen3-1.7b
 ```
 
-For registered models, compression and context configuration are intentionally left to Apple's registry. Advanced exporter flags can still be forwarded when explicitly needed:
+The same command can be used with any model registered for both platforms:
+
+```bash
+apple-agent-kit prepare-all qwen3-0.6b
+```
+
+### Registry configuration
+
+For registered models, Apple Agent Kit resolves the Core AI preset for the selected model and platform.
+
+The registry defines the recommended compression strategy and default context length. For example, the same model may use different configurations on macOS and iOS:
+
+```text
+qwen3-0.6b
+├── macOS → 4bit, context 8192
+└── iOS   → qwen3_0_6b_mixed_4bit_8bit.yaml, context 4096
+
+qwen3-1.7b
+├── macOS → 4bit, context 32768
+└── iOS   → qwen3_1_7b_6bit.yaml, context 4096
+```
+
+Therefore, the normal workflow should not override compression manually:
+
+```bash
+apple-agent-kit prepare qwen3-0.6b \
+  --platform iOS
+```
+
+When Apple's installed Core AI registry references a packaged compression YAML that is unavailable directly from the Python installation, Apple Agent Kit resolves its bundled copy and retries the export automatically.
+
+### Advanced overrides
+
+Exporter options can still be supplied explicitly when running experiments or intentionally overriding registry defaults.
+
+Override the maximum context length:
 
 ```bash
 apple-agent-kit prepare qwen3-1.7b \
@@ -119,16 +171,53 @@ apple-agent-kit prepare qwen3-1.7b \
   --max-context-length 4096
 ```
 
-A dry run resolves the Apple exporter configuration without conversion:
+Use an explicit compression configuration:
 
 ```bash
-apple-agent-kit prepare qwen3-1.7b --platform macOS --dry-run
+apple-agent-kit prepare qwen3-0.6b \
+  --platform iOS \
+  --max-context-length 4096 \
+  --compression-config "$PWD/src/appleagentkit/resources/models/qwen3/qwen3_0_6b_mixed_4bit_8bit.yaml"
 ```
 
-Artifacts are organized as:
+Disable compression for an experimental baseline:
+
+```bash
+apple-agent-kit prepare qwen3-1.7b \
+  --platform iOS \
+  --compression none \
+  --max-context-length 4096
+```
+
+Explicit overrides should generally be reserved for experiments. Registered models should normally use Apple's registry configuration.
+
+### Dry run
+
+Resolve the Core AI exporter configuration without performing the conversion:
+
+```bash
+apple-agent-kit prepare qwen3-1.7b \
+  --platform macOS \
+  --dry-run
+```
+
+This is useful for inspecting the resolved model, platform, compression, and exporter configuration before starting a potentially expensive conversion.
+
+### Artifacts
+
+Prepared resources are kept separately for each model and target platform:
 
 ```text
 Artifacts/
+├── qwen3-0.6b/
+│   ├── manifest.json
+│   ├── macOS/
+│   │   ├── appleagentkit-build.json
+│   │   └── <Core AI resources>
+│   └── iOS/
+│       ├── appleagentkit-build.json
+│       └── <Core AI resources>
+│
 └── qwen3-1.7b/
     ├── manifest.json
     ├── macOS/
@@ -138,6 +227,8 @@ Artifacts/
         ├── appleagentkit-build.json
         └── <Core AI resources>
 ```
+
+Preparing a new model does not replace another model's downloaded Hugging Face cache or prepared Core AI artifacts.
 
 ## Inspect
 
